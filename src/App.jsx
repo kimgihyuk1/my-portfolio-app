@@ -32,8 +32,18 @@ const STORAGE_KEY = "portfolio-v2";
 const emptyForm = { name: "", symbol: "", account: "", currency: "KRW", buyPrice: "", quantity: "", currentPrice: "", dividend: "" };
 
 // ─── 로그인 / 회원가입 화면 ───
+const authInput = {
+  width: "100%", padding: "12px 14px", background: C.bg, border: `1px solid ${C.line}`,
+  borderRadius: 10, color: C.text, fontSize: 15, outline: "none", boxSizing: "border-box",
+};
+const authWrap = {
+  minHeight: "100vh", background: C.bg, color: C.text,
+  fontFamily: "'Pretendard','Apple SD Gothic Neo','Noto Sans KR',sans-serif",
+  display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+};
+
 function AuthScreen() {
-  const [mode, setMode] = useState("login");
+  const [mode, setMode] = useState("login"); // login | signup | reset
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,8 +51,25 @@ function AuthScreen() {
   const [ok, setOk] = useState(null);
 
   const submit = async () => {
+    setMsg(null); setOk(null);
+    if (mode === "reset") {
+      if (!email.trim()) { setMsg("이메일을 입력하세요."); return; }
+      setBusy(true);
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: window.location.origin,
+        });
+        if (error) throw error;
+        setOk("재설정 메일을 보냈습니다. 메일함에서 링크를 눌러 새 비밀번호를 정하세요.");
+      } catch (e) {
+        setMsg(e?.message || "메일 전송에 실패했습니다.");
+      }
+      setBusy(false);
+      return;
+    }
+
     if (!email.trim() || !pw) { setMsg("이메일과 비밀번호를 입력하세요."); return; }
-    setBusy(true); setMsg(null); setOk(null);
+    setBusy(true);
     try {
       if (mode === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
@@ -58,51 +85,119 @@ function AuthScreen() {
     setBusy(false);
   };
 
-  const input = {
-    width: "100%", padding: "12px 14px", background: C.bg, border: `1px solid ${C.line}`,
-    borderRadius: 10, color: C.text, fontSize: 15, outline: "none", boxSizing: "border-box",
-  };
+  const switchMode = (m) => { setMode(m); setMsg(null); setOk(null); };
 
   return (
-    <div style={{
-      minHeight: "100vh", background: C.bg, color: C.text,
-      fontFamily: "'Pretendard','Apple SD Gothic Neo','Noto Sans KR',sans-serif",
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-    }}>
+    <div style={authWrap}>
       <div style={{ width: "100%", maxWidth: 360 }}>
         <div style={{ fontSize: 13, letterSpacing: 2, color: C.sub, textAlign: "center" }}>MY PORTFOLIO</div>
         <h1 style={{ fontSize: 24, fontWeight: 800, textAlign: "center", margin: "6px 0 24px" }}>내 주식 현황</h1>
         <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 24 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-            {[["login", "로그인"], ["signup", "회원가입"]].map(([m, label]) => (
-              <button key={m} onClick={() => { setMode(m); setMsg(null); setOk(null); }}
-                style={{
-                  flex: 1, padding: "9px 0", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 14,
-                  border: `1px solid ${mode === m ? C.accent : C.line}`,
-                  background: mode === m ? "rgba(255,209,102,0.12)" : "transparent",
-                  color: mode === m ? C.accent : C.sub,
-                }}>{label}</button>
-            ))}
-          </div>
+          {mode !== "reset" ? (
+            <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+              {[["login", "로그인"], ["signup", "회원가입"]].map(([m, label]) => (
+                <button key={m} onClick={() => switchMode(m)}
+                  style={{
+                    flex: 1, padding: "9px 0", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 14,
+                    border: `1px solid ${mode === m ? C.accent : C.line}`,
+                    background: mode === m ? "rgba(255,209,102,0.12)" : "transparent",
+                    color: mode === m ? C.accent : C.sub,
+                  }}>{label}</button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>비밀번호 찾기</div>
+          )}
+
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <input style={input} type="email" placeholder="이메일" value={email}
-              onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" />
-            <input style={input} type="password" placeholder="비밀번호 (6자 이상)" value={pw}
-              onChange={(e) => setPw(e.target.value)}
+            <input style={authInput} type="email" placeholder="이메일" value={email}
+              onChange={(e) => setEmail(e.target.value)} autoCapitalize="none"
               onKeyDown={(e) => e.key === "Enter" && submit()} />
+            {mode !== "reset" && (
+              <input style={authInput} type="password" placeholder="비밀번호 (6자 이상)" value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submit()} />
+            )}
             <button onClick={submit} disabled={busy}
               style={{
                 padding: "12px 0", borderRadius: 10, border: "none", background: C.accent,
                 color: "#1a1a1a", fontSize: 15, fontWeight: 700, cursor: busy ? "wait" : "pointer",
               }}>
-              {busy ? "처리 중…" : mode === "login" ? "로그인" : "가입하기"}
+              {busy ? "처리 중…" : mode === "login" ? "로그인" : mode === "signup" ? "가입하기" : "재설정 메일 보내기"}
             </button>
           </div>
+
+          {mode === "login" && (
+            <div style={{ marginTop: 14, textAlign: "center" }}>
+              <button onClick={() => switchMode("reset")}
+                style={{ background: "transparent", border: "none", color: C.sub, cursor: "pointer", fontSize: 13, textDecoration: "underline" }}>
+                비밀번호를 잊으셨나요?
+              </button>
+            </div>
+          )}
+          {mode === "reset" && (
+            <div style={{ marginTop: 14, textAlign: "center" }}>
+              <button onClick={() => switchMode("login")}
+                style={{ background: "transparent", border: "none", color: C.sub, cursor: "pointer", fontSize: 13, textDecoration: "underline" }}>
+                ← 로그인으로 돌아가기
+              </button>
+            </div>
+          )}
+
           {msg && <div style={{ marginTop: 12, fontSize: 13, color: C.up }}>{msg}</div>}
-          {ok && <div style={{ marginTop: 12, fontSize: 13, color: "#6ee7b7" }}>{ok}</div>}
+          {ok && <div style={{ marginTop: 12, fontSize: 13, color: "#6ee7b7", lineHeight: 1.5 }}>{ok}</div>}
         </div>
         <div style={{ marginTop: 16, fontSize: 12, color: C.sub, textAlign: "center", lineHeight: 1.6 }}>
           같은 계정으로 로그인하면 컴퓨터·폰에서 포트폴리오가 동기화됩니다.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 재설정 메일 링크로 돌아왔을 때 새 비밀번호를 정하는 화면
+function NewPasswordScreen({ onDone }) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const save = async () => {
+    setMsg(null);
+    if (pw.length < 6) { setMsg("비밀번호는 6자 이상이어야 합니다."); return; }
+    if (pw !== pw2) { setMsg("두 비밀번호가 일치하지 않습니다."); return; }
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pw });
+      if (error) throw error;
+      onDone();
+    } catch (e) {
+      setMsg(e?.message || "변경에 실패했습니다.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={authWrap}>
+      <div style={{ width: "100%", maxWidth: 360 }}>
+        <div style={{ fontSize: 13, letterSpacing: 2, color: C.sub, textAlign: "center" }}>MY PORTFOLIO</div>
+        <h1 style={{ fontSize: 24, fontWeight: 800, textAlign: "center", margin: "6px 0 24px" }}>새 비밀번호 설정</h1>
+        <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 24 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <input style={authInput} type="password" placeholder="새 비밀번호 (6자 이상)" value={pw}
+              onChange={(e) => setPw(e.target.value)} />
+            <input style={authInput} type="password" placeholder="새 비밀번호 확인" value={pw2}
+              onChange={(e) => setPw2(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && save()} />
+            <button onClick={save} disabled={busy}
+              style={{
+                padding: "12px 0", borderRadius: 10, border: "none", background: C.accent,
+                color: "#1a1a1a", fontSize: 15, fontWeight: 700, cursor: busy ? "wait" : "pointer",
+              }}>
+              {busy ? "변경 중…" : "비밀번호 변경"}
+            </button>
+          </div>
+          {msg && <div style={{ marginTop: 12, fontSize: 13, color: C.up }}>{msg}</div>}
         </div>
       </div>
     </div>
@@ -123,6 +218,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [recovery, setRecovery] = useState(false);
 
   // ─── 세션 초기화 ───
   useEffect(() => {
@@ -145,7 +241,10 @@ export default function App() {
       setSession(data.session);
       setAuthReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s);
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -397,6 +496,9 @@ export default function App() {
         불러오는 중…
       </div>
     );
+  }
+  if (supabaseEnabled && recovery) {
+    return <NewPasswordScreen onDone={() => setRecovery(false)} />;
   }
   if (supabaseEnabled && !session) {
     return <AuthScreen />;
