@@ -4,6 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, ReferenceLine, LabelList,
 } from "recharts";
 import { supabase, supabaseEnabled } from "./supabase";
+import * as XLSX from "xlsx";
 
 // ─── 색상 (한국식: 상승 빨강 / 하락 파랑) ───
 const C = {
@@ -483,6 +484,72 @@ export default function App() {
   };
   const remove = (id) => setHoldings((hs) => hs.filter((h) => h.id !== id));
 
+  // ─── 엑셀/CSV 일괄 등록 ───
+  const [importMsg, setImportMsg] = useState(null);
+
+  const pick = (row, keys) => {
+    for (const k of Object.keys(row)) {
+      const norm = String(k).trim().toLowerCase().replace(/\s|\(.*?\)/g, "");
+      if (keys.some((t) => norm === t)) return row[k];
+    }
+    return undefined;
+  };
+  const normCurrency = (v) => {
+    const s = String(v ?? "").trim().toUpperCase();
+    if (s.includes("USD") || s.includes("$") || s.includes("달러")) return "USD";
+    return "KRW";
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 같은 파일 재선택 허용
+    if (!file) return;
+    setImportMsg(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      const parsed = [];
+      let skipped = 0;
+      for (const row of rows) {
+        const name = pick(row, ["종목명", "종목", "name", "이름"]);
+        const buyPrice = parseFloat(pick(row, ["매수가", "평단", "매입가", "buyprice", "price"]));
+        const quantity = parseFloat(pick(row, ["수량", "주수", "quantity", "qty"]));
+        if (!name || String(name).trim() === "" || isNaN(buyPrice) || isNaN(quantity)) {
+          skipped++;
+          continue;
+        }
+        const symbol = pick(row, ["티커", "심볼", "symbol", "ticker", "코드"]);
+        const account = pick(row, ["계좌", "account"]);
+        const currency = normCurrency(pick(row, ["통화", "currency"]));
+        const dividend = parseFloat(pick(row, ["배당", "주당배당금", "배당금", "dividend"]));
+        parsed.push({
+          id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
+          name: String(name).trim(),
+          symbol: symbol ? String(symbol).trim() : "",
+          account: account ? String(account).trim() : "기본 계좌",
+          currency,
+          buyPrice,
+          quantity,
+          currentPrice: 0,
+          dividendPerShare: isNaN(dividend) ? 0 : dividend,
+        });
+      }
+
+      if (parsed.length === 0) {
+        setImportMsg("등록할 종목을 찾지 못했습니다. 양식(종목명·매수가·수량)을 확인하세요.");
+        return;
+      }
+      setHoldings((hs) => [...hs, ...parsed]);
+      setImportMsg(`${parsed.length}개 종목을 등록했습니다.${skipped ? ` (${skipped}개 행은 건너뜀)` : ""} 시세 새로고침을 눌러 현재가를 채우세요.`);
+    } catch (err) {
+      console.error(err);
+      setImportMsg("파일을 읽지 못했습니다. .xlsx 또는 .csv 파일인지 확인하세요.");
+    }
+  };
+
   const inputStyle = {
     width: "100%", padding: "10px 12px", background: C.bg, border: `1px solid ${C.line}`,
     borderRadius: 10, color: C.text, fontSize: 15, outline: "none", boxSizing: "border-box",
@@ -532,6 +599,21 @@ export default function App() {
             )}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
+            <label
+              style={{
+                background: "transparent", color: C.sub, border: `1px solid ${C.line}`,
+                borderRadius: 10, padding: "10px 14px", fontSize: 14, fontWeight: 700,
+                cursor: "pointer", display: "inline-flex", alignItems: "center",
+              }}
+            >
+              ⇪ 파일 등록
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleImportFile}
+                style={{ display: "none" }}
+              />
+            </label>
             <button
               onClick={refreshPrices}
               disabled={refreshing || holdings.length === 0}
@@ -562,6 +644,20 @@ export default function App() {
           <span>적용 환율: ₩{fmt(exchangeRate, 1)}/USD</span>
           {lastUpdated && <span>마지막 시세 갱신: {lastUpdated}</span>}
         </div>
+
+        {importMsg && (
+          <div
+            style={{
+              background: "rgba(255,209,102,0.1)", border: `1px solid ${C.accent}`, borderRadius: 12,
+              padding: "12px 16px", marginBottom: 14, fontSize: 13, color: C.text, lineHeight: 1.5,
+              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+            }}
+          >
+            <span>{importMsg}</span>
+            <button onClick={() => setImportMsg(null)}
+              style={{ background: "transparent", border: "none", color: C.sub, cursor: "pointer", fontSize: 16 }}>×</button>
+          </div>
+        )}
 
         {refreshError && (
           <div
