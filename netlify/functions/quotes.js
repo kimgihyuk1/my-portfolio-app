@@ -7,8 +7,8 @@ const YHEADERS = {
   Accept: "application/json,text/plain,*/*",
 };
 
-// 심볼 하나의 현재가/통화/최근12개월 배당 합계를 조회
-async function fetchSymbol(symbol) {
+// 심볼 하나의 현재가/통화/최근12개월 배당 합계를 조회 (단일 심볼)
+async function fetchOne(symbol) {
   const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
   for (const host of hosts) {
     try {
@@ -37,10 +37,26 @@ async function fetchSymbol(symbol) {
           }
         }
       }
-      return { price, currency, dividend: Number(dividend.toFixed(6)) };
+      if (price !== null) return { price, currency, dividend: Number(dividend.toFixed(6)) };
     } catch (e) {
       /* 다음 호스트 시도 */
     }
+  }
+  return null;
+}
+
+// 국내 6자리 숫자 코드는 .KS(코스피) → .KQ(코스닥) 순으로 자동 시도
+async function fetchSymbol(symbol) {
+  const s = (symbol || "").trim();
+  let candidates;
+  if (/^\d{6}$/.test(s)) {
+    candidates = [`${s}.KS`, `${s}.KQ`];
+  } else {
+    candidates = [s];
+  }
+  for (const cand of candidates) {
+    const res = await fetchOne(cand);
+    if (res) return res;
   }
   return { price: null, currency: null, dividend: 0 };
 }
