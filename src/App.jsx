@@ -3,6 +3,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis, ReferenceLine, LabelList,
 } from "recharts";
+import { supabase, supabaseEnabled } from "./supabase";
 
 // ─── 색상 (한국식: 상승 빨강 / 하락 파랑) ───
 const C = {
@@ -30,6 +31,84 @@ const priceDigits = (c) => (c === "USD" ? 2 : 0);
 const STORAGE_KEY = "portfolio-v2";
 const emptyForm = { name: "", symbol: "", account: "", currency: "KRW", buyPrice: "", quantity: "", currentPrice: "", dividend: "" };
 
+// ─── 로그인 / 회원가입 화면 ───
+function AuthScreen() {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [ok, setOk] = useState(null);
+
+  const submit = async () => {
+    if (!email.trim() || !pw) { setMsg("이메일과 비밀번호를 입력하세요."); return; }
+    setBusy(true); setMsg(null); setOk(null);
+    try {
+      if (mode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password: pw });
+        if (error) throw error;
+        if (!data.session) setOk("가입 완료! 이메일 인증이 켜져 있으면 메일함을 확인한 뒤 로그인하세요.");
+      }
+    } catch (e) {
+      setMsg(e?.message || "실패했습니다.");
+    }
+    setBusy(false);
+  };
+
+  const input = {
+    width: "100%", padding: "12px 14px", background: C.bg, border: `1px solid ${C.line}`,
+    borderRadius: 10, color: C.text, fontSize: 15, outline: "none", boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: C.bg, color: C.text,
+      fontFamily: "'Pretendard','Apple SD Gothic Neo','Noto Sans KR',sans-serif",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+    }}>
+      <div style={{ width: "100%", maxWidth: 360 }}>
+        <div style={{ fontSize: 13, letterSpacing: 2, color: C.sub, textAlign: "center" }}>MY PORTFOLIO</div>
+        <h1 style={{ fontSize: 24, fontWeight: 800, textAlign: "center", margin: "6px 0 24px" }}>내 주식 현황</h1>
+        <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 24 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+            {[["login", "로그인"], ["signup", "회원가입"]].map(([m, label]) => (
+              <button key={m} onClick={() => { setMode(m); setMsg(null); setOk(null); }}
+                style={{
+                  flex: 1, padding: "9px 0", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 14,
+                  border: `1px solid ${mode === m ? C.accent : C.line}`,
+                  background: mode === m ? "rgba(255,209,102,0.12)" : "transparent",
+                  color: mode === m ? C.accent : C.sub,
+                }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <input style={input} type="email" placeholder="이메일" value={email}
+              onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" />
+            <input style={input} type="password" placeholder="비밀번호 (6자 이상)" value={pw}
+              onChange={(e) => setPw(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()} />
+            <button onClick={submit} disabled={busy}
+              style={{
+                padding: "12px 0", borderRadius: 10, border: "none", background: C.accent,
+                color: "#1a1a1a", fontSize: 15, fontWeight: 700, cursor: busy ? "wait" : "pointer",
+              }}>
+              {busy ? "처리 중…" : mode === "login" ? "로그인" : "가입하기"}
+            </button>
+          </div>
+          {msg && <div style={{ marginTop: 12, fontSize: 13, color: C.up }}>{msg}</div>}
+          {ok && <div style={{ marginTop: 12, fontSize: 13, color: "#6ee7b7" }}>{ok}</div>}
+        </div>
+        <div style={{ marginTop: 16, fontSize: 12, color: C.sub, textAlign: "center", lineHeight: 1.6 }}>
+          같은 계정으로 로그인하면 컴퓨터·폰에서 포트폴리오가 동기화됩니다.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [holdings, setHoldings] = useState([]);
   const [exchangeRate, setExchangeRate] = useState(1380);
@@ -41,27 +120,106 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(null);
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
-  // ─── 불러오기 / 저장 (localStorage) ───
+  // ─── 세션 초기화 ───
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const d = JSON.parse(raw);
-        setHoldings(d.holdings || []);
-        if (d.exchangeRate) setExchangeRate(d.exchangeRate);
-        if (d.lastUpdated) setLastUpdated(d.lastUpdated);
-      }
-    } catch (e) { /* 초기 상태 */ }
-    setLoaded(true);
+    if (!supabaseEnabled) {
+      // 로그인 없이 localStorage 전용 모드
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const d = JSON.parse(raw);
+          setHoldings(d.holdings || []);
+          if (d.exchangeRate) setExchangeRate(d.exchangeRate);
+          if (d.lastUpdated) setLastUpdated(d.lastUpdated);
+        }
+      } catch (e) { /* 초기 상태 */ }
+      setLoaded(true);
+      setAuthReady(true);
+      return;
+    }
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
   }, []);
 
+  // ─── 로그인 시 클라우드에서 불러오기 (없으면 로컬 데이터 이전) ───
+  useEffect(() => {
+    if (!supabaseEnabled) return;
+    if (!session) { setLoaded(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoaded(false);
+      const applyLocal = () => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const d = JSON.parse(raw);
+            setHoldings(d.holdings || []);
+            if (d.exchangeRate) setExchangeRate(d.exchangeRate);
+            if (d.lastUpdated) setLastUpdated(d.lastUpdated);
+          }
+        } catch (e) { /* noop */ }
+      };
+      try {
+        const { data, error } = await supabase
+          .from("portfolios")
+          .select("data")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+        if (error) throw error;
+        if (cancelled) return;
+        if (data?.data) {
+          const d = data.data;
+          setHoldings(d.holdings || []);
+          setExchangeRate(d.exchangeRate || 1380);
+          setLastUpdated(d.lastUpdated || null);
+        } else {
+          // 클라우드가 비어있으면 이 기기 로컬 데이터를 올려서 시작
+          applyLocal();
+        }
+      } catch (e) {
+        // 오프라인 등: 로컬로 대체
+        if (!cancelled) applyLocal();
+      }
+      if (!cancelled) setLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [session]);
+
+  // ─── 변경 저장 (로컬 캐시 + 클라우드 동기화, 디바운스) ───
   useEffect(() => {
     if (!loaded) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ holdings, exchangeRate, lastUpdated }));
-    } catch (e) { console.error("저장 실패", e); }
-  }, [holdings, exchangeRate, lastUpdated, loaded]);
+    const payload = { holdings, exchangeRate, lastUpdated };
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(payload)); } catch (e) { /* noop */ }
+
+    if (!supabaseEnabled || !session) return;
+    setSyncing(true);
+    const t = setTimeout(async () => {
+      try {
+        await supabase.from("portfolios").upsert({
+          user_id: session.user.id,
+          data: payload,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error("동기화 실패", e);
+      }
+      setSyncing(false);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [holdings, exchangeRate, lastUpdated, loaded, session]);
+
+  const logout = async () => {
+    if (supabaseEnabled) await supabase.auth.signOut();
+    setHoldings([]); setLastUpdated(null);
+  };
 
   // ─── 자동 시세 조회 (Claude + 웹검색) ───
   const refreshPrices = async () => {
@@ -232,6 +390,18 @@ export default function App() {
   };
   const labelStyle = { fontSize: 12, color: C.sub, marginBottom: 6, display: "block" };
 
+  // 로그인/동기화 게이트
+  if (supabaseEnabled && !authReady) {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, color: C.sub, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "sans-serif" }}>
+        불러오는 중…
+      </div>
+    );
+  }
+  if (supabaseEnabled && !session) {
+    return <AuthScreen />;
+  }
+
   return (
     <div
       style={{
@@ -246,6 +416,18 @@ export default function App() {
           <div>
             <div style={{ fontSize: 13, letterSpacing: 2, color: C.sub }}>MY PORTFOLIO</div>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: "4px 0 0" }}>내 주식 현황</h1>
+            {supabaseEnabled && session && (
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span>{session.user.email}</span>
+                <span style={{ color: syncing ? C.accent : "#6ee7b7" }}>
+                  {syncing ? "동기화 중…" : "● 동기화됨"}
+                </span>
+                <button onClick={logout}
+                  style={{ background: "transparent", border: "none", color: C.sub, cursor: "pointer", textDecoration: "underline", fontSize: 11, padding: 0 }}>
+                  로그아웃
+                </button>
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button
