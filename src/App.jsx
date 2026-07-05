@@ -316,6 +316,38 @@ export default function App() {
     return () => clearTimeout(t);
   }, [holdings, exchangeRate, lastUpdated, loaded, session]);
 
+  // ─── 리밸런싱 상담 (AI) ───
+  const [advisorQ, setAdvisorQ] = useState("");
+  const [advisorAnswer, setAdvisorAnswer] = useState(null);
+  const [advisorBusy, setAdvisorBusy] = useState(false);
+  const [advisorError, setAdvisorError] = useState(null);
+
+  const askAdvisor = async () => {
+    if (advisorBusy) return;
+    if (holdings.length === 0) { setAdvisorError("먼저 종목을 등록하세요."); return; }
+    setAdvisorBusy(true);
+    setAdvisorError(null);
+    setAdvisorAnswer(null);
+    try {
+      const summary = holdings
+        .map((h) =>
+          `${h.name}(${h.symbol || "-"}) | 계좌:${h.account || "기본"} | ${h.currency} | 매수 ${h.buyPrice} | 현재 ${h.currentPrice || "?"} | 수량 ${h.quantity} | 주당배당 ${h.dividendPerShare || 0}`
+        )
+        .join("\n");
+      const res = await fetch("/.netlify/functions/advisor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ holdings: summary, question: advisorQ }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `오류 (HTTP ${res.status})`);
+      setAdvisorAnswer(data.answer || "응답이 비어 있습니다.");
+    } catch (e) {
+      setAdvisorError(e?.message || "상담 요청에 실패했습니다.");
+    }
+    setAdvisorBusy(false);
+  };
+
   const logout = async () => {
     if (supabaseEnabled) await supabase.auth.signOut();
     setHoldings([]); setLastUpdated(null);
@@ -1188,6 +1220,60 @@ export default function App() {
             </div>
           );
         })}
+
+        {/* ─── 리밸런싱 상담 (AI) ─── */}
+        {rows.length > 0 && (
+          <div
+            style={{
+              background: C.card, border: `1px solid ${C.line}`, borderRadius: 16,
+              padding: "18px 20px", marginBottom: 16,
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>리밸런싱 상담</div>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 12, lineHeight: 1.5 }}>
+              보유 종목을 바탕으로 성장·배당 균형 관점의 의견을 받습니다. 원하는 방향을 적어보세요.
+            </div>
+            <textarea
+              value={advisorQ}
+              onChange={(e) => setAdvisorQ(e.target.value)}
+              placeholder="예: 수익률 저조한 종목을 정리하고 배당을 높이고 싶어. 성장성도 유지하면서 어떤 걸 추가하면 좋을까?"
+              rows={3}
+              style={{
+                width: "100%", padding: "12px 14px", background: C.bg, border: `1px solid ${C.line}`,
+                borderRadius: 10, color: C.text, fontSize: 14, outline: "none", boxSizing: "border-box",
+                resize: "vertical", fontFamily: "inherit", lineHeight: 1.5,
+              }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+              <button
+                onClick={askAdvisor}
+                disabled={advisorBusy}
+                style={{
+                  background: C.accent, color: "#1a1a1a", border: "none", borderRadius: 10,
+                  padding: "10px 18px", fontSize: 14, fontWeight: 700,
+                  cursor: advisorBusy ? "wait" : "pointer",
+                }}
+              >
+                {advisorBusy ? "분석 중… (최대 1분)" : "상담 요청"}
+              </button>
+            </div>
+
+            {advisorError && (
+              <div style={{ marginTop: 12, fontSize: 13, color: C.up, lineHeight: 1.5 }}>{advisorError}</div>
+            )}
+            {advisorAnswer && (
+              <div
+                style={{
+                  marginTop: 14, padding: "14px 16px", background: C.bg, border: `1px solid ${C.line}`,
+                  borderRadius: 12, fontSize: 13.5, color: C.text, lineHeight: 1.7,
+                  whiteSpace: "pre-wrap", wordBreak: "break-word",
+                }}
+              >
+                {advisorAnswer}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ─── 백업 / 복원 ─── */}
         <div
