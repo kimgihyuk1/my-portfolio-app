@@ -56,7 +56,7 @@ export async function handler(event) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 2500,
+        max_tokens: 6000,
         system,
         messages: [{ role: "user", content: userContent }],
         tools: [{ type: "web_search_20250305", name: "web_search" }],
@@ -77,6 +77,18 @@ export async function handler(event) {
       .map((b) => b.text)
       .join("\n")
       .trim();
+
+    if (!answer) {
+      const reason = data?.stop_reason || "unknown";
+      return {
+        statusCode: 200,
+        headers: cors,
+        body: JSON.stringify({
+          answer: "",
+          error: `답변이 생성되지 않았습니다. (stop_reason: ${reason}) 질문을 조금 더 짧게 하거나 다시 시도해보세요.`,
+        }),
+      };
+    }
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({ answer }) };
   } catch (e) {
