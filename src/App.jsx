@@ -341,7 +341,8 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `오류 (HTTP ${res.status})`);
-      setAdvisorAnswer(data.answer || "응답이 비어 있습니다.");
+      if (!data.answer) throw new Error(data?.error || "응답이 비어 있습니다. 다시 시도해보세요.");
+      setAdvisorAnswer(data.answer);
     } catch (e) {
       setAdvisorError(e?.message || "상담 요청에 실패했습니다.");
     }
