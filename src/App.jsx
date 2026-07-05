@@ -430,21 +430,50 @@ export default function App() {
     };
   }, [rows]);
 
+  // 겹치는 종목(같은 종목명)을 하나로 통합 — 차트/배당표용
+  const mergedRows = useMemo(() => {
+    const map = new Map();
+    for (const r of rows) {
+      const key = r.name;
+      if (!map.has(key)) {
+        map.set(key, {
+          id: "merged-" + key, name: r.name, symbol: r.symbol, currency: r.currency,
+          cost: 0, value: 0, valueKRW: 0, costKRW: 0, divKRW: 0, annualDiv: 0, quantity: 0,
+          currentPrice: r.currentPrice,
+        });
+      }
+      const m = map.get(key);
+      m.cost += r.cost; m.value += r.value;
+      m.valueKRW += r.valueKRW; m.costKRW += r.costKRW;
+      m.divKRW += r.divKRW; m.annualDiv += r.annualDiv;
+      m.quantity += r.quantity;
+      if (r.currentPrice) m.currentPrice = r.currentPrice;
+    }
+    return [...map.values()].map((m) => {
+      const pnl = m.value - m.cost;
+      return {
+        ...m, pnl,
+        rate: m.cost > 0 ? (pnl / m.cost) * 100 : 0,
+        dps: m.quantity > 0 ? m.annualDiv / m.quantity : 0,
+      };
+    });
+  }, [rows]);
+
   const pieData = useMemo(
-    () => rows.filter((r) => r.valueKRW > 0).map((r) => ({ name: r.name, value: Math.round(r.valueKRW) })),
-    [rows]
+    () => mergedRows.filter((r) => r.valueKRW > 0).map((r) => ({ name: r.name, value: Math.round(r.valueKRW) })),
+    [mergedRows]
   );
   const barData = useMemo(
-    () => rows.map((r) => ({ name: r.name, rate: Number(r.rate.toFixed(2)) })),
-    [rows]
+    () => mergedRows.map((r) => ({ name: r.name, rate: Number(r.rate.toFixed(2)) })),
+    [mergedRows]
   );
   const divBarData = useMemo(
     () =>
-      rows
+      mergedRows
         .filter((r) => r.divKRW > 0)
         .map((r) => ({ name: r.name, div: Math.round(r.divKRW) }))
         .sort((a, b) => b.div - a.div),
-    [rows]
+    [mergedRows]
   );
 
   // ─── 폼 ───
@@ -482,7 +511,13 @@ export default function App() {
     }
     setShowForm(false);
   };
-  const remove = (id) => setHoldings((hs) => hs.filter((h) => h.id !== id));
+  const remove = (id) => {
+    const h = holdings.find((x) => x.id === id);
+    const label = h ? `'${h.name}'${h.account ? ` (${h.account})` : ""}` : "이 종목";
+    if (window.confirm(`${label}을(를) 삭제할까요?`)) {
+      setHoldings((hs) => hs.filter((x) => x.id !== id));
+    }
+  };
 
   // ─── 엑셀/CSV 일괄 등록 ───
   const [importMsg, setImportMsg] = useState(null);
@@ -498,6 +533,57 @@ export default function App() {
     const s = String(v ?? "").trim().toUpperCase();
     if (s.includes("USD") || s.includes("$") || s.includes("달러")) return "USD";
     return "KRW";
+  };
+
+  const exportToExcel = () => {
+    if (holdings.length === 0) { setImportMsg("내보낼 종목이 없습니다."); return; }
+    const data = holdings.map((h) => ({
+      종목명: h.name,
+      티커: h.symbol || "",
+      계좌: h.account || "기본 계좌",
+      통화: h.currency,
+      매수가: h.buyPrice,
+      수량: h.quantity,
+      현재가: h.currentPrice || "",
+      "배당(선택)": h.dividendPerShare || 0,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "내주식");
+    const today = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `내주식_백업_${today}.xlsx`);
+  };
+
+  // ─── 전체 백업 (JSON) 다운로드 / 복원 ───
+  const backupJSON = () => {
+    const payload = { holdings, exchangeRate, lastUpdated, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `내주식_전체백업_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const restoreJSON = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const d = JSON.parse(text);
+      if (!Array.isArray(d.holdings)) throw new Error("형식 오류");
+      if (!window.confirm(`백업을 불러오면 현재 목록(${holdings.length}개)이 백업 내용(${d.holdings.length}개)으로 교체됩니다. 진행할까요?`)) return;
+      setHoldings(d.holdings);
+      if (d.exchangeRate) setExchangeRate(d.exchangeRate);
+      if (d.lastUpdated) setLastUpdated(d.lastUpdated);
+      setImportMsg(`백업을 복원했습니다. (${d.holdings.length}개 종목)`);
+    } catch (err) {
+      console.error(err);
+      setImportMsg("백업 파일을 읽지 못했습니다. 전체백업(.json) 파일인지 확인하세요.");
+    }
   };
 
   const handleImportFile = async (e) => {
@@ -586,13 +672,17 @@ export default function App() {
             <div style={{ fontSize: 13, letterSpacing: 2, color: C.sub }}>MY PORTFOLIO</div>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: "4px 0 0" }}>내 주식 현황</h1>
             {supabaseEnabled && session && (
-              <div style={{ fontSize: 11, color: C.sub, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 11, color: C.sub, marginTop: 6, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span>{session.user.email}</span>
                 <span style={{ color: syncing ? C.accent : "#6ee7b7" }}>
                   {syncing ? "동기화 중…" : "● 동기화됨"}
                 </span>
-                <button onClick={logout}
-                  style={{ background: "transparent", border: "none", color: C.sub, cursor: "pointer", textDecoration: "underline", fontSize: 11, padding: 0 }}>
+                <button
+                  onClick={() => { if (window.confirm("로그아웃 하시겠어요?")) logout(); }}
+                  style={{
+                    background: "transparent", border: `1px solid ${C.line}`, color: C.sub,
+                    borderRadius: 8, padding: "4px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  }}>
                   로그아웃
                 </button>
               </div>
@@ -614,6 +704,18 @@ export default function App() {
                 style={{ display: "none" }}
               />
             </label>
+            <button
+              onClick={exportToExcel}
+              disabled={holdings.length === 0}
+              style={{
+                background: "transparent", color: C.sub, border: `1px solid ${C.line}`,
+                borderRadius: 10, padding: "10px 14px", fontSize: 14, fontWeight: 700,
+                cursor: holdings.length === 0 ? "default" : "pointer",
+                opacity: holdings.length === 0 ? 0.5 : 1,
+              }}
+            >
+              ⇩ 엑셀 저장
+            </button>
             <button
               onClick={refreshPrices}
               disabled={refreshing || holdings.length === 0}
@@ -882,7 +984,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows
+                  {mergedRows
                     .slice()
                     .sort((a, b) => b.divKRW - a.divKRW)
                     .map((r) => (
@@ -1040,6 +1142,31 @@ export default function App() {
             </div>
           );
         })}
+
+        {/* ─── 백업 / 복원 ─── */}
+        <div
+          style={{
+            marginTop: 24, paddingTop: 16, borderTop: `1px solid ${C.line}`,
+            display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center",
+          }}
+        >
+          <span style={{ fontSize: 12, color: C.sub }}>백업:</span>
+          <button
+            onClick={backupJSON}
+            style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.sub, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}
+          >
+            ⇩ 전체 백업 (파일 저장)
+          </button>
+          <label
+            style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.sub, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}
+          >
+            ⇪ 백업 복원
+            <input type="file" accept=".json" onChange={restoreJSON} style={{ display: "none" }} />
+          </label>
+          <span style={{ fontSize: 11, color: C.sub }}>
+            전체 백업은 계좌·현재가·환율까지 그대로 저장/복원합니다.
+          </span>
+        </div>
 
         {/* ─── 추가/수정 폼 ─── */}
         {showForm && (
