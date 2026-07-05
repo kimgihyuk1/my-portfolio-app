@@ -460,11 +460,18 @@ export default function App() {
   }, [rows]);
 
   const pieData = useMemo(
-    () => mergedRows.filter((r) => r.valueKRW > 0).map((r) => ({ name: r.name, value: Math.round(r.valueKRW) })),
+    () =>
+      mergedRows
+        .filter((r) => r.valueKRW > 0)
+        .map((r) => ({ name: r.name, value: Math.round(r.valueKRW) }))
+        .sort((a, b) => b.value - a.value),
     [mergedRows]
   );
   const barData = useMemo(
-    () => mergedRows.map((r) => ({ name: r.name, rate: Number(r.rate.toFixed(2)) })),
+    () =>
+      mergedRows
+        .map((r) => ({ name: r.name, rate: Number(r.rate.toFixed(2)) }))
+        .sort((a, b) => b.rate - a.rate),
     [mergedRows]
   );
   const divBarData = useMemo(
@@ -473,6 +480,14 @@ export default function App() {
         .filter((r) => r.divKRW > 0)
         .map((r) => ({ name: r.name, div: Math.round(r.divKRW) }))
         .sort((a, b) => b.div - a.div),
+    [mergedRows]
+  );
+  const valueBarData = useMemo(
+    () =>
+      mergedRows
+        .filter((r) => r.valueKRW > 0)
+        .map((r) => ({ name: r.name, value: Math.round(r.valueKRW) }))
+        .sort((a, b) => b.value - a.value),
     [mergedRows]
   );
 
@@ -951,10 +966,41 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* 종목별 총 평가액 바 */}
+            {valueBarData.length > 0 && (
+              <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>종목별 총 평가액</div>
+                <div style={{ fontSize: 11, color: C.sub, marginBottom: 8 }}>
+                  원화 환산 · 합계 ₩{fmt(total.value)}
+                </div>
+                <div style={{ height: Math.max(220, valueBarData.length * 42) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={valueBarData} layout="vertical" margin={{ left: 8, right: 80, top: 4, bottom: 4 }}>
+                      <XAxis type="number" hide />
+                      <YAxis
+                        type="category" dataKey="name" width={80}
+                        tick={{ fill: C.sub, fontSize: 11 }} axisLine={false} tickLine={false}
+                      />
+                      <Tooltip
+                        formatter={(v) => `₩${fmt(v)}`}
+                        cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                        contentStyle={{ background: C.cardSoft, border: `1px solid ${C.line}`, borderRadius: 10, color: C.text }}
+                      />
+                      <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={18} fill={C.down}>
+                        <LabelList
+                          dataKey="value" position="right"
+                          formatter={(v) => `₩${fmt(v)}`}
+                          style={{ fill: C.text, fontSize: 11 }}
+                        />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
           </div>
         )}
-
-        {/* ─── 배당 현황 표 (항상 표시) ─── */}
         {rows.length > 0 && (
           <div
             style={{
